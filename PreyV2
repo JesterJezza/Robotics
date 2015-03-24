@@ -1,0 +1,183 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+#PREY PROGRAM
+#DO A FINITE STATE MACHINE
+#Behaviour for when green isn't present
+
+import rospy
+from geometry_msgs.msg import Twist
+from sensor_msgs.msg import LaserScan
+from sensor_msgs.msg import Image
+from kobuki_msgs.msg import BumperEvent
+from cv_bridge import CvBridge, CvBridgeError
+import cv2
+from cv2 import namedWindow
+import numpy
+from random import choice
+
+class Prey():
+    """A class to enable the Turtlebot to operate as the Prey"""
+    
+    def __init__(self, name):
+        """Function to intialise the class. Called when creating a new  instance
+        :param name: The name of the ros node """
+        
+        rospy.loginfo("Starting Prey node %s" % name)   
+        namedWindow("object",flags=cv2.CV_WINDOW_AUTOSIZE)
+        namedWindow("thresholded image",flags=cv2.CV_WINDOW_AUTOSIZE)
+        cv2.startWindowThread()
+        self.bridge = CvBridge()
+        print "Window thread started"
+        self.isRun = True
+        self.laser_sub = rospy.Subscriber("/turtlebot_1/scan",LaserScan,callback=self.laser_callback,queue_size=1)
+        self.image_sub = rospy.Subscriber("/turtlebot_1/camera/rgb/image_raw",Image,callback=self.image_callback,queue_size=1) #image_raw for sim, image_color for bot
+        self.bumper_sub = rospy.Subscriber("/turtlebot_1/events/bumper",BumperEvent, callback=self.bumper_callback, queue_size=1)
+        self.cmd_vel_pub = rospy.Publisher("/turtlebot_1/cmd_vel",Twist,queue_size=1)
+        
+    def laser_callback(self,msg):
+        #while self.isRun == True:
+            self.obstacle = False        
+            print "**********"
+            self.ranges = msg.ranges
+            min_distance = numpy.nanmin(self.ranges)
+            rospy.loginfo("Minimum distance: %f" % min_distance)
+            twist_msg = Twist()
+            
+            if min_distance <= 0.4:
+                rospy.Rate(10)
+                now = rospy.Time.Now().to_sec()
+                end_time = now + 1
+                angle_velocity = choice([0.4,-0.4])
+                self.obstacle = True
+                
+                while end_time > rospy.Time.now().to_sec():
+                    twist_msg.linear.x = 0
+                    twist_msg.angular.z = angle_velocity
+                    self.cmd_vel_pub.publish(twist_msg)
+
+    def bumper_callback(self, msg):
+        rospy.loginfo("Recieved bumper event")
+        twist = Twist()
+        twist.angular.z = 0
+        twist.linear.x = 0
+        print "The Prey has been caught! :( Exiting game." 
+        self.flag = False
+
+    def image_callback(self,img):
+        #while self.isRun == True:
+            rospy.loginfo("Received image of size: %i x %i" % (img.width,img.height))
+            try:
+                cv_image = self.bridge.imgmsg_to_cv2(img, "bgr8")
+            except CvBridgeError, e:
+                print e
+            #change to hsv - looking for green block, use cv2.inRange (takes image as input, lower and upper bounds of each colour channel)     
+            hsv_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV)
+            self.sim = True
+            #change for irl
+            if(self.sim):
+                hsv_threshold = cv2.inRange(hsv_image, numpy.array((60,0,0)), numpy.array((60,255,255)))
+            else:
+                hsv_threshold = cv2.inRange(hsv_image, numpy.array((64, 29, 80)),numpy.array((90,255,255)))
+                
+            print"==========image callback============"
+            print numpy.mean(hsv_image[:,:,0])
+            print numpy.mean(hsv_image[:,:,1])
+            print numpy.mean(hsv_image[:,:,2])
+            
+            hsv_contours, hierachy = cv2.findContours(hsv_threshold.copy(),
+                                                      cv2.RETR_TREE,
+                                                      cv2.CHAIN_APPROX_SIMPLE)
+                                                      
+            largestA = 0
+            largestC = None
+                                                      
+            for c in hsv_contours:
+                a = cv2.contourArea(c)
+                if a > 250.0 and a > largestA: #2000 irl
+                    #cv2.drawContours(cv_image,c, -1, (255,0,0))
+                    largestA = a
+                    largestC = c
+            x = -1
+            if largestC != None:
+                cv2.drawContours(cv_image, [largestC],0,(255,0,0),3)
+                x,y,w,h = cv2.boundingRect(largestC)
+                x = x + (w/2) # gets midpoint of bounding box
+                x = x/640.0
+                print "X: ", x
+            else: 
+                self.roam(img)
+                return
+            
+            print "==============="
+            cv2.imshow("object",cv_image)
+            kernel = numpy.ones((3,3), numpy.uint8)
+            hsv_out = cv2.erode(hsv_threshold,kernel,iterations = 1)
+            cv2.imshow("thresholded image", hsv_out)
+            
+            wheel_power = 0
+            if x < 0.5:
+                #turn left
+                wheel_power = x -0.5
+            else:
+                #turn right
+                wheel_power = -(0.5 - x)
+                
+            twist = Twist()
+            twist.angular.z = wheel_power
+            twist.linear.x = 0.5
+            self.cmd_vel_pub.publish(twist)
+        
+    def roam(self, img):
+       # while self.isRun == True:
+            rospy.loginfo("********roam***********")
+            rospy.loginfo("Received image of size: %i x %i" % (img.width,img.height))
+            min_distance = numpy.nanmin(self.ranges)
+            print "*******roam range ******"
+            print min_distance
+            if min_distance < 0.4:
+                self.stop()
+                return
+            try:
+                cv_image = self.bridge.imgmsg_to_cv2(img, "bgr8")
+            except CvBridgeError, e:
+                print e
+            
+            gray_image = cv2.cvtColor(cv_image,cv2.COLOR_BGR2GRAY)
+            ##cv2.imshow("object", gray_image)
+            left_image = gray_image[:,0:320]
+            right_image = gray_image[:,320:640]
+            left_mean_intensity = numpy.mean(left_image)           # Getting the mean intensity of the whole image
+            right_mean_intensity = numpy.mean(right_image)
+            left_normalised_mean_intensity = left_mean_intensity / 255  # Normalising the intensity
+            right_normalised_mean_intensity = right_mean_intensity / 255
+
+            twist = Twist()
+            twist.angular.z = ((left_normalised_mean_intensity*0.25)+(right_normalised_mean_intensity*0.25))
+            twist.linear.x = ((right_normalised_mean_intensity*0.5)+(right_normalised_mean_intensity*0.25))
+            self.cmd_vel_pub.publish(twist)
+##        print "Left wheel power: ", left_wheel_power
+##        print "Right wheel power: ", right_wheel_power        
+##        
+##        cv2.imshow("left grey image", left_image)
+##        cv2.imshow("right grey image", right_image)
+#        print "publish msg"
+#        print twist_msg
+#        self.cmd_vel_pub.publish(twist_msg)
+#        
+#    def stop(self):
+#        print "============stop==========="
+#        min_range = numpy.nanmin(self.ranges)
+#        print "*******stop range***********"
+#        print min_range
+#        if min_range < 0.4 or min_range == 'nan':
+#            twist = Twist()
+#            twist.linear.x = 0
+#            twist.angular.z = 0
+#            print twist
+#            self.cmd_vel_pub.publish(twist)
+#            print "Turtlebot has found a suitable place to hide!"
+        
+if __name__ == '__main__':
+    rospy.init_node("prey")
+    p = Prey(rospy.get_name())
+    rospy.spin()
