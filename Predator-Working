@@ -98,6 +98,17 @@ class Predator():
 #            print numpy.mean(hsv_image[:,:,0])
 #            print numpy.mean(hsv_image[:,:,1])
 #            print numpy.mean(hsv_image[:,:,2])
+                
+                
+            #NEED TO TEST
+#                hsv2 = hsv_threshold
+#            des = cv2.bitwise_not(hsv2)
+#            contour,hier = cv2.findContours(des,cv2.RETR_CCOMP, cv2.CHAIN_APPOX_SIMPLE)
+#            for cnt in contour:
+#                cv2.drawContours(des,[cnt],0,255,-1)
+#            hsv2 = cv2.bitwise_not(des)
+#            cv2.imshow("hsv",hsv2)
+#            
             
             hsv_contours, hierachy = cv2.findContours(hsv_threshold.copy(),
                                                       cv2.RETR_TREE,
@@ -113,7 +124,7 @@ class Predator():
                     
             x = -1
             if largestC != None:
-                cv2.drawContours(cv_image,[largestC],0,(255,0,0),3)
+                cv2.drawContours(cv_image,[largestC],0,(0,255,0),2)
                 x,y,w,h = cv2.boundingRect(largestC)
                 x = x + (w/2)
                 x = x/640.0
@@ -126,7 +137,7 @@ class Predator():
             cv2.imshow("hsv",cv_image)
             kernel = numpy.ones((5,5), numpy.uint8)
             hsv_out = cv2.erode(hsv_threshold,kernel,iterations = 2)
-            
+            #hsv_out = cv2.FloodFill(hsv_out, x,[new_val], lo_diff=(0,0,0,0),up_diff=(0,0,0,0),flags=8,mask=largestC)
             cv2.imshow("object", hsv_out)
             
             wheel_power = 0
